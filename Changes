@@ -1,0 +1,50 @@
+Revision history for Perl extension DateTimeX::Fiscal::Fiscal5253
+
+2012-07-21 21:27  jim
+
+	* lib/DateTime, lib/DateTimeX, lib/DateTimeX/Calendar,
+	  lib/DateTimeX/Fiscal: Renamed directory lib/DateTime to
+	  lib/DateTimeX
+
+2012-07-21 21:25  jim
+
+	* lib/DateTime/Calendar, lib/DateTime/Fiscal,
+	  lib/DateTime/Fiscal/Fiscal5253.pm: Renamed directory Calendar to
+	  Fiscal
+
+2012-07-21 21:23  jim
+
+	* Makefile.PL, lib/DateTime/Calendar/Fiscal5253.pm, t/00_load.t,
+	  t/10_constructors.t, t/20_accessors.t, t/30_methods.t,
+	  t/80_sanity.t: Made edits to move package from DateTime::Calendar
+	  to DateTimeX::Fiscal namespace.
+
+2012-07-21 05:46  jim
+
+	* lib/DateTime/Calendar/Fiscal5253.pm: Final edit of documentation
+	  and code prior to release.
+
+2012-07-21 05:08  jim
+
+	* Makefile.PL: Added module dependencies
+
+2012-07-21 05:07  jim
+
+	* t/10_constructors.t, t/20_accessors.t, t/30_methods.t,
+	  t/80_sanity.t, t/90_pod.t, t/91_coverage.t: Test suite for
+	  initial release
+
+2012-07-21 05:06  jim
+
+	* MANIFEST: Added additional test scripts
+
+2012-07-14 03:01  jim
+
+	* Changes, MANIFEST, Makefile.PL, README, lib, lib/DateTime,
+	  lib/DateTime/Calendar, lib/DateTime/Calendar/Fiscal5253.pm, t,
+	  t/00_load.t: Initial import
+
+2012-07-14 02:55  jim
+
+	* .: Creating project repository structure.
+
