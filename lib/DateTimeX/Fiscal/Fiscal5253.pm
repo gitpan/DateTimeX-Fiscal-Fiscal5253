@@ -5,7 +5,7 @@ package DateTimeX::Fiscal::Fiscal5253;
 use strict;
 use warnings;
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 # This enables trace messages to be used by the test suite.
 our $TRACE = 0;
@@ -50,9 +50,9 @@ my @periodmonths = qw(
 
 # Utility function to validate values supplied as a calendar style.
 my $_valid_cal_style = sub {
-    my $style = shift;
+    my $style = shift || 'fiscal';
 
-    my $cal = lc($style) || 'fiscal';
+    my $cal = lc($style);
     if ( $cal ne 'fiscal' && $cal ne 'restated' && $cal ne 'truncated' ) {
         carp "Invalid calendar style specified: $cal";
         return;

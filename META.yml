@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               DateTimeX-Fiscal-Fiscal5253
-version:            0.04
+version:            0.05
 abstract:           Perl extension for DateTime
 author:
     - Jim Bacon <jim@nortx.com>

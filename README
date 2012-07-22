@@ -12,7 +12,7 @@ year based on twelve calendar months.
 Its primary distinguishing characteristic is that it always begins and ends
 on the same weekday. In addition, a 52/53 week year will always have exactly
 52 or 53 perfect seven day weeks, yielding calendars that always have
-either 464 or 371 days. This is what makes it useful for year-over-year
+either 364 or 371 days. This is what makes it useful for year-over-year
 comparisons where seasonal factors such as holidays are important.
 
 INSTALLATION
