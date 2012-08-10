@@ -22,7 +22,6 @@ my %params = (
     end_type    => 'closest',
     leap_period => 'first'
 );
-
 my $fc = $class->new(%params);
 
 # Make a second one with a known 53 week year.
@@ -33,52 +32,72 @@ my %params53 = (
     end_type    => 'closest',
     leap_period => 'first'
 );
-
 my $fc53 = $class->new(%params53);
+
+# Also make one that is guaranteed to contain the current date.
+my $dt = DateTime->now();
+my $dt6 = DateTime->now()->clone->add( months => 6 );
+my $e_mo = $dt6->month;
+my $fcnow = $class->new( end_month => $dt6->month, year => $dt6->year );
 
 ok(!$fc->has_leap_week, '2012 does not have a leap week');
 ok($fc53->has_leap_week, '2014 does have a leap week');
 
-my $c52 = $fc->calendar();
-isa_ok($c52, 'ARRAY', 'scalar context returns array reference');
-my @c52 = $fc->calendar();
-ok(!ref(@c52), 'list context does not return a reference');
-is_deeply($c52, \@c52, 'array and reference are the same');
-for (qw( Fiscal Restated Truncated)) {
-    my $c = $fc->calendar(style => $_);
-    isa_ok($c, 'ARRAY', "parameter style $_");
-    is_deeply($c52, $c, "style $_ is same as default in normal year");
-}
-
 # Verify that calendars for 53 week years vary for each style
-my $cmeta53 = $fc53->calendar()->[0];
+my $cmeta53 = $fc53->summary();
 ok($cmeta53->{style} eq 'fiscal', 'default style set to "fiscal"');
 ok($cmeta53->{weeks} == 53, 'default has 53 weeks');
-$cmeta53 = $fc53->calendar(style => 'Fiscal')->[0];
+$cmeta53 = $fc53->summary(style => 'Fiscal');
 ok($cmeta53->{style} eq 'fiscal', 'style set to "fiscal"');
 ok($cmeta53->{weeks} == 53, 'Fiscal has 53 weeks');
-$cmeta53 = $fc53->calendar(style => 'Restated')->[0];
+$cmeta53 = $fc53->summary(style => 'Restated');
 ok($cmeta53->{style} eq 'restated', 'style set to "restated"');
 ok($cmeta53->{weeks} == 52, 'Restated has 52 weeks');
-$cmeta53 = $fc53->calendar(style => 'Truncated')->[0];
+$cmeta53 = $fc53->summary(style => 'Truncated');
 ok($cmeta53->{style} eq 'truncated', 'style set to "truncated"');
 ok($cmeta53->{weeks} == 52, 'Truncated has 52 weeks');
 
 # Test that "contains" function accepts valid calendar values
 ok($fc53->contains(date => $fc53->start) == 1, 'default has start date');
 ok($fc53->contains(date => $fc53->end) == 12,  'default has end date');
-ok($fc53->contains(date => $fc53->start, calendar => 'Fiscal') == 1,
+ok($fc53->contains(date => $fc53->start, style => 'Fiscal') == 1,
     'default has start date');
-ok($fc53->contains(date => $fc53->end, calendar => 'Fiscal') == 12,
+ok($fc53->contains(date => $fc53->end, style => 'Fiscal') == 12,
     'default has end date');
-ok($fc53->contains(date => $fc53->start, calendar => 'Truncated') == 1,
+ok($fc53->contains(date => $fc53->start, style => 'Truncated') == 1,
     'Truncated has start date');
-ok($fc53->contains(date => $fc53->end, calendar => 'Restated') == 12,
+ok($fc53->contains(date => $fc53->end, style => 'Restated') == 12,
     'Restated has end date');
-ok(!$fc53->contains(date => $fc53->end, calendar => 'Truncated'),
+ok(!$fc53->contains(date => $fc53->end, style => 'Truncated'),
     'Truncated does not have default end date');
-ok(!$fc53->contains(date => $fc53->start, calendar => 'Restated'),
+ok(!$fc53->contains(date => $fc53->start, style => 'Restated'),
     'Restated does not have default start date');
+
+# Verify that "contains" honors the "style" method and accepts a single
+# scalar as the "date" parameter.
+my $origstyle = $fc53->style;
+$fc53->style('Fiscal');
+ok($fc53->contains($fc53->start) == 1, 'default has start date');
+ok($fc53->contains($fc53->end) == 12,  'default has end date');
+$fc53->style('Truncated');
+ok($fc53->contains($fc53->start) == 1, 'Truncated has start date');
+ok(!$fc53->contains($fc53->end), 'Truncated does not have default end date');
+$fc53->style('Restated');
+ok($fc53->contains($fc53->end) == 12, 'Restated has end date');
+ok(!$fc53->contains($fc53->start),'Restated does not have default start date');
+$fc->style($origstyle);
+
+# verify that missing date param uses today
+ok($fcnow->contains( date => undef ) > 0, 'defaults to current date');
+ok($fcnow->contains( date => '' ) > 0, 'defaults to current date');
+ok($fcnow->contains( date => 0 ) > 0, 'defaults to current date');
+ok($fcnow->contains() > 0, 'defaults to current date');
+
+# verify that "contains" accepts a DT object and the keyword "today"
+ok($fcnow->contains( date => $dt ) > 0, 'accepts a DT object');
+ok($fcnow->contains( $dt ) > 0, 'accepts a DT object');
+ok($fcnow->contains( date => 'today' ) > 0, 'accepts "today"');
+ok($fcnow->contains( 'today' ) > 0, 'accepts "today"');
 
 # verify that the period methods are working
 my $pref = $fc->period(period => 1);
@@ -87,33 +106,65 @@ my %p = $fc->period(period => 1);
 ok(!ref(%p), 'list context does not return a reference');
 is_deeply($pref, \%p, 'hash and reference are the same');
 for (qw( Fiscal Restated Truncated)) {
-    my $p = $fc->period(period => 1, calendar => $_);
-    isa_ok($p, 'HASH', "parameter calendar $_");
+    my $p = $fc->period(period => 1, style => $_);
+    isa_ok($p, 'HASH', "parameter style $_");
 }
 for (qw( month start end weeks )) {
     my $pmethod = "period_$_";
     ok($fc->$pmethod(period => 1) eq $pref->{$_}, "$pmethod matches data");
 }
 
+# verify that the period methods can take a single scalar for period number
+$pref = $fc->period(2);
+isa_ok($pref, 'HASH', 'scalar context returns a hash reference');
+%p = $fc->period(2);
+ok(!ref(%p), 'list context does not return a reference');
+is_deeply($pref, \%p, 'hash and reference are the same');
+for (qw( month start end weeks )) {
+    my $pmethod = "period_$_";
+    ok($fc->$pmethod(2) eq $pref->{$_}, "$pmethod matches data");
+}
+
 # Test the fail conditions now.
-# A lexical block is used so the change to STDERR isn't global if we
-# add more tests after this.
 {
     # Capture any STDERR output
     my $stderr = '';
     local *STDERR;
     open STDERR, '>', \$stderr;
 
-    ok(!$fc->calendar(style => 'foobar'), 'calendars rejects style "foobar"');
-    ok(!$fc->contains(calendar => 'foobar'), 'contains rejects style "foobar"');
-    ok(!$fc->period(period => 1, calendar => 'foobar'),
+    ok(!eval { $fc->style('foobar') },
+        'style rejects "foobar"');
+    ok(!eval { $fc->style('fiscal','foobar') },
+        'style rejects extra parameter');
+    ok(!eval { $fc->summary(style => 'foobar') },
+        'calendar rejects style "foobar"');
+    ok(!eval { $fc->summary(foo => 'bar') },
+        'calendar rejects unknown parameter');
+    ok(!eval { $fc->contains(style => 'foobar') },
+        'contains rejects style "foobar"');
+    ok(!eval { $fc->contains(foo => 'bar') },
+        'contains rejects unknown parameter');
+    ok(!eval { $fc->period(period => 1, style => 'foobar') },
         'period rejects style "foobar"');
+    ok(!eval { $fc->period( foo => 'bar') },
+        'period rejects unknown parameter');
     for (qw( month start end weeks )) {
         my $pmethod = "period_$_";
-        ok(
-            !$fc->$pmethod(period => 1, calendar => 'foobar'),
-            "$pmethod rejects calendar style 'foobar'"
-        );
+        ok(!eval { $fc->$pmethod(period => 1, style => 'foobar') },
+                "$pmethod rejects calendar style 'foobar'" );
+        ok(!eval { $fc->$pmethod(foo => 'bar') },
+                "$pmethod rejects unknown parameter");
+    }
+    ok(!eval { $fc->week(week => 1, style => 'foobar') },
+        'week rejects style "foobar"');
+    ok(!eval { $fc->week(foo => 'bar') },
+        'week rejects unknown parameter');
+    for (qw( period start end )) {
+        my $wmethod = "period_$_";
+        ok(!eval { $fc->$wmethod(period => 1, style => 'foobar') },
+                "$wmethod rejects calendar style 'foobar'");
+        ok(!eval { $fc->$wmethod(foo => 'bar') },
+                "$wmethod rejects unknown parameter");
     }
 }
 

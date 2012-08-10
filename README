@@ -31,6 +31,28 @@ This module requires these other modules and libraries:
   Carp
   DateTime
 
+ERROR HANDLING
+
+After reading far too many discussions about "best practice" for error
+handling, espeically by constructors, I have been persuaded that "dieing"
+(via a croak) is the best thing for this module to do. The reasons ave varied:
+
+1. The practice of returning "undef" is largely a holdover from the days of
+the C programming language and be readily emulated by using the following:
+
+    my $object = eval { DateTimeX::Fiscal::Fiscal5253->new() };
+
+2. Returning "undef" and making people check a global error method/variable
+is no different that using the above and having them check "$@" (which can
+be invalid under certain conditions.)
+
+3. Try::Tiny addresses the problem with number 2 above.
+
+4. Returning an object in the face of error conditions just seems wrong!
+
+5. All of the error conditions being trapped are fatal anyway, so throwing
+an exception is probably the right thing to do so code can be corrected.
+
 COPYRIGHT AND LICENCE
 
 Copyright (C) 2012 by Jim Bacon

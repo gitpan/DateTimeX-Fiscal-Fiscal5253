@@ -281,13 +281,9 @@ foreach ( @goodparams ) {
 # Now test the bad param combinations
 # Disable STDERR so we don't get a lot of clutter from intentional failures.
 foreach ( @failparams ) {
-    my $stderr = '';
-    local *STDERR;
-    open STDERR, '>',\$stderr;
-
-    my $fc = $class->new(%{$_->{params}});
+    my $fc = eval { $class->new(%{$_->{params}}) };
     is($fc,undef,$_->{tname});
-    like($stderr,qr/$_->{match}/,$_->{tname});
+    like($@,qr/$_->{match}/,$_->{tname});
 }
 
 # Now do it all over again using the Empty::Fiscal5253 class to be sure
@@ -305,13 +301,9 @@ foreach ( @goodparams ) {
 # Now test the bad param combinations
 # Capture STDERR to check for correct error message.
 foreach ( @failparams ) {
-    my $stderr = '';
-    local *STDERR;
-    open STDERR, '>',\$stderr;
-
-    my $fc = $class->new(%{$_->{params}});
+    my $fc = eval { $class->new(%{$_->{params}}) };
     is($fc,undef,$_->{tname});
-    like($stderr,qr/$_->{match}/,$_->{tname});
+    like($@,qr/$_->{match}/,$_->{tname});
 }
 
 exit;

@@ -1,4 +1,5 @@
 Changes
+LICENSE
 Makefile.PL
 MANIFEST
 README
@@ -10,4 +11,5 @@ t/80_sanity.t
 t/90_pod.t
 t/91_coverage.t
 lib/DateTimeX/Fiscal/Fiscal5253.pm
-META.yml                                 Module meta-data (added by MakeMaker)
+META.yml                                 Module YAML meta-data (added by MakeMaker)
+META.json                                Module JSON meta-data (added by MakeMaker)

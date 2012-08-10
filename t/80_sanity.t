@@ -60,25 +60,25 @@ sub test_oneyear
         'does not contain day after end date');
     if ( $fc->has_leap_week ) {
         my $dt = $fc->{_start}->clone->add( days => 6 );
-        ok(!$fc->contains( date => $dt, calendar => 'Restated' ),
+        ok(!$fc->contains( date => $dt, style => 'Restated' ),
             'Restated calendar does not have first week');
         $dt->add( days => 1 );
-        ok($dt->ymd eq $fc->{_restated}->{meta}->{start},
+        ok($dt->ymd eq $fc->{_restated}->{summary}->{start},
             'Restated start date is one week after base start');
-        ok($fc->contains( date => $dt, calendar => 'Restated' ),
+        ok($fc->contains( date => $dt, style => 'Restated' ),
             'Restated calendar contains own start');
-        ok($fc->{_restated}->{meta}->{style} eq 'restated',
-            'Restated has correct name in calendar meta record');
+        ok($fc->{_restated}->{summary}->{style} eq 'restated',
+            'Restated has correct name in calendar summary record');
         $dt = $fc->{_end}->clone->subtract( days => 6 );
-        ok(!$fc->contains( date => $dt, calendar => 'Truncated' ),
+        ok(!$fc->contains( date => $dt, style => 'Truncated' ),
             'Truncated calendar does not have last week');
         $dt->subtract( days => 1 );
-        ok($dt->ymd eq $fc->{_truncated}->{meta}->{end},
+        ok($dt->ymd eq $fc->{_truncated}->{summary}->{end},
             'Truncated start date is one week before base end');
-        ok($fc->contains( date => $dt, calendar => 'Truncated' ),
+        ok($fc->contains( date => $dt, style => 'Truncated' ),
             'Truncated calendar contains own end');
-        ok($fc->{_truncated}->{meta}->{style} eq 'truncated',
-            'Truncated has correct name in calendar meta record');
+        ok($fc->{_truncated}->{summary}->{style} eq 'truncated',
+            'Truncated has correct name in calendar summary record');
         if ( $fc->leap_period eq 'first' ) {
             ok($fc->period_weeks( period => 1 ) == $fc->period_weeks( period => 4 ) + 1,'period 1 has an extra week');
             ok($fc->period_weeks( period => 12 ) == $fc->period_weeks( period => 9 ),'period 12 does not have an extra week');

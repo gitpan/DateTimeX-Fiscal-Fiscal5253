@@ -3,17 +3,17 @@
 package DateTimeX::Fiscal::Fiscal5253;
 
 use strict;
-use warnings;
 
-our $VERSION = '0.05';
+our $VERSION = '1.01';
 
 # This enables trace messages to be used by the test suite.
 our $TRACE = 0;
 
 use Carp;
-use Data::Dumper;
 use DateTime;
 use POSIX qw( strftime );
+
+use Data::Dumper;
 
 my $pkg = __PACKAGE__;
 
@@ -34,18 +34,18 @@ my $defaults = {
 };
 
 my @periodmonths = qw(
-  January
-  February
-  March
-  April
-  May
-  June
-  July 
-  August
-  September
-  October
-  November
-  December
+    January
+    February
+    March
+    April
+    May
+    June
+    July 
+    August
+    September
+    October
+    November
+    December
 );
 
 # Utility function to validate values supplied as a calendar style.
@@ -53,17 +53,14 @@ my $_valid_cal_style = sub {
     my $style = shift || 'fiscal';
 
     my $cal = lc($style);
-    if ( $cal ne 'fiscal' && $cal ne 'restated' && $cal ne 'truncated' ) {
-        carp "Invalid calendar style specified: $cal";
-        return;
-    }
+    croak "Invalid calendar style specified: $cal"
+        unless $cal =~ /^(fiscal|restated|truncated)$/;
 
     return $cal;
 };
 
 # Utility function to covert a date string to a DT object
-sub _str2dt
-{
+my $_str2dt = sub {
     my $date = shift;
 
     # convert date param to DT object
@@ -73,33 +70,87 @@ sub _str2dt
     } elsif ( $date =~ m/^(\d{1,2})\/(\d{1,2})\/(\d{4})($|\D+)/ ) {
         $y = $3, $m = $2, $d = $1;
     } else {
-        carp "Unable to parse date string: $date";
-        return;
+        croak "Unable to parse date string: $date";
     }
-    eval {
-        $date = DateTime->new( year => $y, month => $m, day => $d );
-    };
-    if ( $@ ) {
-        carp "Invalid date: $date";
-        return;
-    }
+    eval { $date = DateTime->new( year => $y, month => $m, day => $d ); }
+        or croak "Invalid date: $date";
 
     return $date;
-}
+};
+
+# Figure out if the epoch is a 32- or 64-bit value and use DT if needed
+my $_use_dt = sub {
+    my $year = shift;
+
+    # test for 32- or 64-bit time values
+    my @tdata = gmtime(2147483651); # This is past the 32-bit rollover
+
+    return ($tdata[5] != 138) && ($year < 1903 || $year > 2037);
+};
+
+# Build the week array once, then manipulate as needed.
+# Using epoch math is more than an order of magnitude faster
+# than DT, but the size of the epoch value must be tested.
+my $_build_weeks = sub {
+    my $self = shift;
+
+    my $weeks = {};
+    if ( &{$_use_dt}($self->{year}) ) {
+        my $wstart = $self->{_start}->clone;
+        my $wend = $self->{_start}->clone->add( days => 6 );
+
+        for ( 1 .. $self->{_weeks} ) {
+            $weeks->{$_} = {
+                start => $wstart->ymd,
+                end => $wend->ymd,
+            };
+
+            # skip the last step so the ending values are preserved
+            # if needed for something else in the future.
+            last if $_ == $self->{_weeks};
+
+            $wstart->add( days => 7 );
+            $wend->add( days => 7 );
+        }
+    } else {
+        my $daysecs = ( 60 * 60 * 24 );
+        my $weeksecs = $daysecs * 7;
+
+        my $wstart = $self->{_start}->epoch + ($daysecs/2);
+        my $wend = $wstart + ( $daysecs * 6 );
+
+        for ( 1 .. $self->{_weeks} ) {
+            $weeks->{$_} = {
+                start => strftime('%Y-%m-%d',localtime($wstart)),
+                end => strftime('%Y-%m-%d',localtime($wend)),
+            };
+
+            # skip the last step so the ending values are preserved
+            # if needed for something else in the future.
+            last if $_ == $self->{_weeks};
+
+            $wstart += $weeksecs;
+            $wend += $weeksecs;
+        }
+    }
+
+    $self->{_weeks_raw} = $weeks;
+
+    return;
+};
 
 # This code ref builds the basic calendar structures as needed.
 my $_build_periods = sub {
     my $self = shift;
-    my $style = shift || 'fiscal';
+    my $style = shift || $self->{_style};
 
     # not strictly needed, but makes for easier to read code
     my $restate = $style eq 'restated' ? 1 : 0;
     my $truncate = $style eq 'truncated' ? 1 : 0;
 
-    # Avoid expensive re-builds when possible.
+    # Avoid re-builds when possible.
     return if $restate && defined($self->{_restated});
     return if $truncate && defined($self->{_truncated});
-    return if $style eq 'fiscal' && defined($self->{_fiscal});
 
     # Disabled this for now, becomes problematic for various
     # methods such as "contains" in normal years.
@@ -130,43 +181,60 @@ my $_build_periods = sub {
     }
 
     my $pdata  = {
-        meta => {
-        style => $style,
-        year => $self->{year},
-        end_month => $self->{end_month},
-        end_dow => $self->{end_dow},
-        end_type => $self->{end_type},
-        leap_period => $self->{leap_period},
-        weeks => $wkcnt,
-        start => $pstart->ymd,
-        end => undef, # this is set after the cache is built
+        summary => {
+            style => $style,
+            year => $self->{year},
+            end_month => $self->{end_month},
+            end_dow => $self->{end_dow},
+            end_type => $self->{end_type},
+            leap_period => $self->{leap_period},
+            weeks => $wkcnt,
+            start => $pstart->ymd,
+            end => undef, # this is set after the cache is built
         }
     };
 
+    my $wdata = {};
+    my $wkcntr = 1;
     for (0 .. 11) {
         my $p_index = ($p1month + $_) % 12;
 
-        $pdata->{$_ + 1} = {
+        my $pinfo = {
             period => $_ + 1,
-            start   => $pstart->ymd,
             weeks    => $pweeks[$p_index],
             month    => $periodmonths[$p_index]
         };
 
-        $pstart->add(weeks => $pweeks[$p_index]);
+        for my $pw ( 1 .. $pweeks[$p_index] ) {
+            my $wksrc = $restate ? $wkcntr + 1 : $wkcntr;
+            my $winfo = {
+                week => $wkcntr,
+                period => $_ + 1,
+                period_week => $pw,
+                start => $self->{_weeks_raw}->{$wksrc}->{start},
+                end => $self->{_weeks_raw}->{$wksrc}->{end},
+            };
+            $pinfo->{start} = $winfo->{start} if $pw == 1;
+            $pinfo->{end} = $winfo->{end} if $pw == $pweeks[$p_index];
+            $wdata->{$wkcntr} = $winfo;
+            $wkcntr++;
+        }
 
-        my $pend = $pstart->clone->subtract(days => 1);
-        $pdata->{$_ + 1}->{end} = $pend->ymd;
+        $pdata->{$_ + 1} = $pinfo;
     }
-    $pdata->{meta}->{end} = $pdata->{12}->{end};
+    $pdata->{summary}->{end} = $pdata->{12}->{end};
 
     if ( $self->{_weeks} == 52 ) {
         # Set style to 'fiscal' and assign the structure to all
         # three calendar types in a normal year to save time and space.
-        $pdata->{meta}->{style} = 'fiscal';
+        $pdata->{summary}->{style} = 'fiscal';
         $self->{_fiscal} = $self->{_restated} = $self->{_truncated} = $pdata;
+        $self->{_fiscal_weeks} = $wdata;
+        $self->{_restated_weeks} = $wdata;
+        $self->{_truncated_weeks} = $wdata;
     } else {
         $self->{"_$style"} = $pdata;
+        $self->{"_${style}_weeks"} = $wdata;
     }
 
     $self->{_stale} = 0;
@@ -224,8 +292,7 @@ sub _find5253
     my $y1 = $args->{date}->year;
 
     # do not assume it is safe to change the year attribute
-    local($args->{year});
-    $args->{year} = $y1;
+    local $args->{year} = $y1;
 
     my $e1 = _end5253($args);
     return $y1 + 1 if $e1 < $args->{date};
@@ -243,50 +310,45 @@ sub new
     my %args = @_;
 
     # normalize end_type arg
-    $args{end_type} = lc($args{end_type}) if exists $args{end_type};
+    $args{end_type} = lc($args{end_type}) if $args{end_type};
     # normalize leap_period arg
-    $args{leap_period} = lc($args{leap_period}) if exists $args{leap_period};
+    $args{leap_period} = lc($args{leap_period}) if $args{leap_period};
 
     # do basic validation and set controlling params as needed
     # the default is to end on the last Saturday of December
     foreach ( keys(%{$defaults}) ) {
         $args{$_} = $defaults->{$_} if !defined($args{$_});
     }
-    if ( $args{end_type} ne 'last' && $args{end_type} ne 'closest' ) {
-        carp "Invalid value for param end_type: $args{end_type}";
-        return;
-    }
-    if ( $args{end_month} < 1 || $args{end_month} > 12 ) {
-        carp "Invalid value for param end_month: $args{end_month}";
-        return;
-    }
-    if ( $args{end_dow} < 1 || $args{end_dow} > 7 ) {
-        carp "Invalid value for param end_dow: $args{end_dow}";
-        return;
-    }
-    if ( $args{leap_period} ne 'first' && $args{leap_period} ne 'last' ) {
-        carp "Invalid value for param leap_period: $args{leap_period}";
-        return;
-    }
 
-    if ( $args{year} && $args{date} ) {
-        # which one would be correct?
-        carp 'Mutually exclusive parameters "year" and "date" present';
-        return;
-    } elsif ( ref($args{date}) && $args{date}->isa('DateTime') ) {
+    croak "Invalid value for param end_type: $args{end_type}"
+        unless $args{end_type} =~ /^(last|closest)$/;
+    croak "Invalid value for param end_month: $args{end_month}"
+        if $args{end_month} < 1 || $args{end_month} > 12;
+    croak "Invalid value for param end_dow: $args{end_dow}"
+        if $args{end_dow} < 1 || $args{end_dow} > 7;
+    croak "Invalid value for param leap_period: $args{leap_period}"
+        unless $args{leap_period} =~ /^(first|last)$/;
+
+    # which one would be correct?
+    croak 'Mutually exclusive parameters "year" and "date" present'
+        if $args{year} && $args{date};
+
+    croak 'Object in "date" parameter is not a member of DateTime'
+        if ref($args{date}) && !$args{date}->isa('DateTime');
+
+    if ( ref($args{date}) ) {
         $args{date} = $args{date}->clone;
-    } elsif ( ref($args{date}) ) {
-        carp 'Object in "date" parameter is not a member of DateTime';
-        return;
     } elsif ( $args{date} ) {
-        return unless $args{date} = _str2dt($args{date});
+        # _str2dt will croak on error
+        $args{date} = &{$_str2dt}($args{date});
     } elsif ( !$args{year} ) {
-        $args{date} = DateTime->today() unless $args{year};
+        $args{date} = DateTime->today();
     }
 
     my $class = ref($proto) || $proto;
     my $self = bless {
         _stale => 1,
+        _style => 'fiscal',
         _fiscal => undef,
         _restated => undef,
         _truncated => undef,
@@ -296,8 +358,7 @@ sub new
         delete($args{$_});
     };
     if ( scalar(keys(%args)) ) {
-        carp 'Unknown parameter(s): '.join(',',keys(%args));
-        return;
+        croak 'Unknown parameter(s): '.join(',',keys(%args));
     }
 
     if ( $self->{date} ) {
@@ -312,35 +373,22 @@ sub new
     $self->{_weeks} =
         $self->{_start}->clone->add( days => 367 ) > $self->{_end} ? 52 : 53;
 
+    &{$_build_weeks}($self);
     &{$_build_periods}($self,'fiscal');
 
+    if ( $self->has_leap_week ) {
+        &{$_build_periods}($self,'restated');
+        &{$_build_periods}($self,'truncated');
+    }
+
     return $self;
-}
-
-# return the meta data about the underlying object.
-sub meta
-{
-    my $self = shift;
-
-    my %fyear = (
-        year => $self->{year},
-        end_month => $self->{end_month},
-        end_dow => $self->{end_dow},
-        end_type => $self->{end_type},
-        leap_period => $self->{leap_period},
-        start => $self->{_start_ymd},
-        end => $self->{_end_ymd},
-        weeks => $self->{_weeks},
-    );
-
-    return wantarray ? %fyear : \%fyear;
 }
 
 sub year
 {
     my $self = shift;
 
-    croak "FATAL ERROR: Trying to set read-only param year" if @_;
+    croak 'FATAL ERROR: Attempt to set read-only param year' if @_;
 
     return $self->{year};
 }
@@ -349,7 +397,7 @@ sub end_month
 {
     my $self = shift;
 
-    croak "FATAL ERROR: Trying to set read-only param end_month" if @_;
+    croak 'FATAL ERROR: Attempt to set read-only param end_month' if @_;
 
     return $self->{end_month};
 }
@@ -358,7 +406,7 @@ sub end_dow
 {
     my $self = shift;
 
-    croak "FATAL ERROR: Trying to set read-only param end_dow" if @_;
+    croak 'FATAL ERROR: Attempt to set read-only param end_dow' if @_;
 
     return $self->{end_dow};
 }
@@ -367,7 +415,7 @@ sub end_type
 {
     my $self = shift;
 
-    croak "FATAL ERROR: Trying to set read-only param end_type" if @_;
+    croak 'FATAL ERROR: Attempt to set read-only param end_type' if @_;
 
     return $self->{end_type};
 }
@@ -376,7 +424,7 @@ sub leap_period
 {
     my $self = shift;
 
-    croak "FATAL ERROR: Trying to set read-only param leap_period" if @_;
+    croak 'FATAL ERROR: Attempt to set read-only param leap_period' if @_;
 
     return $self->{leap_period};
 }
@@ -385,7 +433,7 @@ sub start
 {
     my $self = shift;
 
-    croak "FATAL ERROR: Trying to set read-only param _start_ymd" if @_;
+    croak 'FATAL ERROR: Attempt to set read-only param _start_ymd' if @_;
 
     return $self->{_start_ymd};
 }
@@ -394,7 +442,7 @@ sub end
 {
     my $self = shift;
 
-    croak "FATAL ERROR: Trying to set read-only param _end_ymd" if @_;
+    croak 'FATAL ERROR: Attempt to set read-only param _end_ymd' if @_;
 
     return $self->{_end_ymd};
 }
@@ -403,7 +451,7 @@ sub weeks
 {
     my $self = shift;
 
-    croak "FATAL ERROR: Trying to set read-only param _weeks" if @_;
+    croak 'FATAL ERROR: Attempt to set read-only param _weeks' if @_;
 
     return $self->{_weeks};
 }
@@ -415,95 +463,76 @@ sub has_leap_week
     return ($self->{_weeks} == 53 ? 1 : 0);
 }
 
+sub style
+{
+    my $self = shift;
+
+    if ( @_ ) {
+        croak 'Too many arguments' if @_ > 1;
+        $self->{_style} = &{$_valid_cal_style}(shift);
+    }
+
+    return $self->{_style};
+}
+
+# return summary data about a calendar.
+sub summary
+{
+    my $self = shift;
+    my %args = @_ == 1 ? ( style => shift ) : @_;
+
+    $args{style} ||= $self->{_style};
+    croak 'Unknown parameter present' if scalar(keys(%args)) > 1;
+
+    my $cal = &{$_valid_cal_style}($args{style});
+
+    my %cdata;
+    for ( qw( style year start end weeks ) ) {
+        $cdata{$_} = $self->{"_$cal"}->{summary}->{$_};
+    }
+
+    return wantarray ? %cdata : \%cdata;
+}
+
 sub contains
 {
     my $self = shift;
-    my %args = @_;
+    my %args = @_ == 1 ? ( date => shift ) : @_;
 
-    return unless my $cal = &{$_valid_cal_style}($args{calendar});
+    $args{date} ||= 'today';
+    $args{style} ||= $self->{_style};
+
+    croak 'Unknown parameter present' if scalar(keys(%args)) > 2;
+
+    my $cal = &{$_valid_cal_style}($args{style});
 
     # Yes, a DT oject set to "today" would work, but this is faster.
+    # NOTE! This will break in 2038 on 32bit builds!
     $args{date} = strftime("%Y-%m-%d",localtime())
-       if !$args{date} || lc($args{date}) eq 'today';
+       if  ( lc($args{date}) eq 'today' );
 
-    return unless my $date = _str2dt($args{date})->ymd;
+    # _str2dt will croak on error
+    my $date = &{$_str2dt}($args{date})->ymd;
 
-    &{$_build_periods}($self,$cal);
+    my $whash = $self->{"_${cal}_weeks"};
+    my $cdata = $self->{"_$cal"}->{summary};
 
-    my $phash = $self->{"_$cal"};
-    return if $date lt $phash->{1}->{start} || $date gt $phash->{12}->{end};
+    # it is NOT an error if the date isn't in the calendar,
+    # so return 0 to differentiate this from an error condition
+    return 0 if $date lt $cdata->{start} || $date gt $cdata->{end};
 
-    # since the date is in the calendar, let's return it's period
-    my $p;
-    for ( $p = 1; $date gt $phash->{$p}->{end}; $p++ ) {
-        if ( $p > 12 ) {
+    # since the date is in the calendar, let's return it's period,
+    # and optionally, a structure with period and week number.
+    my $w;
+    for ( $w = 1; $date gt $whash->{$w}->{end}; $w++ ) {
+        if ( $w > $cdata->{weeks} ) {
             # this should NEVER happen
-            croak "FATAL ERROR! RAN OUT OF PERIODS";
+            croak 'FATAL ERROR! RAN OUT OF WEEKS';
         }
     }
+    my $p = $whash->{$w}->{period};
 
-    return $p;
-}
-
-# This method transforms the hash in _fiscal, _restated or _truncated
-# into an array with metadata in the first element.
-sub calendar
-{
-    my $self = shift;
-    my %args = @_;
-
-    return unless my $style = &{$_valid_cal_style}($args{style});
-
-    &{$_build_periods}($self,$style);
-    my $pdata = $self->{"_$style"};
-
-    my @calendar = (
-        $pdata->{meta}
-    );
-
-    for ( 1 .. 12 ) {
-        push(@calendar,$pdata->{$_});
-    }
-
-    return wantarray ? @calendar : \@calendar;
-}
-
-sub period
-{   
-    my $self   = shift;
-    my %args = @_;
-
-    return unless my $cal = &{$_valid_cal_style}($args{calendar});
-
-    # guard against the pathological case of $args{period} == undef
-    if ( exists($args{period}) && !defined($args{period}) ) {
-        carp "param 'period' exists but has has a value of 'undef'";
-        return;
-    }
-    my $pnum = defined($args{period}) ? $args{period} : 0;
-    if ( $pnum < 0 || $pnum > 12 ) {
-        carp "Invalid period specified";
-        return;
-    }
-
-    &{$_build_periods}($self,$cal);
-    my $chash = $self->{"_$cal"};
-
-    # Things get interesting if the current date is NOT in the fiscal
-    # year described by the object. Best to just return an error if
-    # that is the case.
-    if (!$pnum) {
-        my $ymd = DateTime->now( time_zone => 'floating' )->ymd;
-        if ( !($pnum = $self->contains( date => $ymd, calendar => $cal )) ) {
-            carp 'Today\'s date is not in this object\'s fiscal year';
-            return;
-        }
-    }
-
-    my %phash = %{$chash->{$pnum}};
-    $phash{period} = $pnum;
-
-    return wantarray ? %phash : \%phash;
+    return wantarray ? ( period => $p, week => $w ) : $p;
 }
 
 # Utiliy routine, hidden from public use, to prevent duplicate code in
@@ -511,22 +540,34 @@ sub period
 my $_period_attr = sub {
     my $self = shift;
     my $attr = shift;
-    my %args = @_;
+    my %args = @_ == 1 ? ( period => shift ) : @_;
 
-    my $pnum =
-      defined($args{period}) ? $args{period} : $self->period;
-    if ( $pnum < 1 || $pnum > 12 ) {
-        carp "Invalid period specified: $args{period}";
-        return;
+    $args{period} ||= 0;
+    $args{style} ||= $self->{_style};
+
+    croak 'Unknown parameter present' if scalar(keys(%args)) > 2;
+
+    my $cal = &{$_valid_cal_style}($args{style});
+
+    if ( $args{period} < 1 || $args{period} > 12 ) {
+        croak "Invalid period specified: $args{period}";
     }
 
-    return unless my $cal = &{$_valid_cal_style}($args{calendar});
+    # we want to return a copy so the guts can't be changed
+    my %phash = %{$self->{"_$cal"}->{$args{period}}};
 
-    &{$_build_periods}($self,$cal);
-    my $chash = $self->{"_$cal"};
-
-    return $chash->{$pnum}->{$attr};
+    return $attr eq 'period' ? %phash : $phash{$attr};
 };
+
+sub period
+{
+    my $self   = shift;
+    my %args = @_ == 1 ? ( period => shift ) : @_;
+
+    my %phash =  &{$_period_attr}( $self,'period',%args );
+
+    return wantarray ? %phash : \%phash;
+}
 
 sub period_month
 {
@@ -556,6 +597,69 @@ sub period_weeks
     return &{$_period_attr}( $self,'weeks',@_ );
 }
 
+# Utiliy routine, hidden from public use, to prevent duplicate code in
+# the week attribute accessors.
+my $_week_attr = sub {
+    my $self = shift;
+    my $attr = shift;
+    my %args = @_ == 1 ? ( week => shift ) : @_;
+
+    $args{week} ||= 0;
+    $args{style} ||= $self->{_style};
+
+    croak 'Unknown parameter present' if scalar(keys(%args)) > 2;
+
+    my $cal = &{$_valid_cal_style}($args{style});
+
+    if ( $args{week} < 1
+        || $args{week} > $self->{"_$cal"}->{summary}->{weeks} ) {
+        croak "Invalid week specified: $args{week}";
+    }
+
+    # make a copy so the outside can't change the guts
+    my %whash = %{$self->{"_${cal}_weeks"}->{$args{week}}};
+
+    return $attr eq 'week' ? %whash : $whash{$attr};
+};
+
+sub week
+{
+    my $self   = shift;
+    my %args = @_ == 1 ? ( week => shift ) : @_;
+
+    my %whash =  &{$_week_attr}( $self,'week',%args );
+
+    return wantarray ? %whash : \%whash;
+}
+
+sub week_period
+{
+    my $self = shift;
+
+    return &{$_week_attr}( $self,'period',@_ );
+}
+
+sub week_period_week
+{
+    my $self = shift;
+
+    return &{$_week_attr}( $self,'period_week',@_ );
+}
+
+sub week_start
+{
+    my $self = shift;
+
+    return &{$_week_attr}( $self,'start',@_ );
+}
+
+sub week_end
+{
+    my $self = shift;
+
+    return &{$_week_attr}( $self,'end',@_ );
+}
+
 1;
 
 __END__
@@ -581,25 +685,38 @@ Retail Federation.
 
 You are B<strongly> advised to speak with your accounting people
 (after all, the reason you are reading this is because they want reports,
-right?) and show them a dump of the data for any given year and see
-if it matches what they expect.
+right?) and show them the summary data for any given year and see if it
+matches what they expect.
 
 Keep in mind that when an accountant says they want data for fiscal year 2012
-they are talking about an accounting year that B<ends> in 2012. An
+they are probably talking about an accounting year that B<ends> in 2012. An
 accountant will usually think in terms of "the fiscal year ending in October,
 2012." (Unless they are talking about Retail 4-5-4 years, see the section
 below that deals specifically with this.)
 
 =head1 ERROR HANDLING
 
-All methods return C<undef> if an error occurs as well as emitting an
-error message via C<carp>.
+All error conditions die via C<croak>. Please see the F<README> file for the
+rationale behind this.
+
+B<Note!> This is a change in the API! The first releases returned C<undef>
+on error with a message emitted via C<carp>. It was felt that this change
+would not impose an undue hardship in the code changes required to accomdate
+it and that the new behavior would not introduce any undesired side-effects
+in any existing code.
 
 =head1 CONSTRUCTOR
 
 =head2 new
 
  my $fc = DateTimeX::Fiscal::Fiscal5253->new();
+ 
+ my $fc = DateTimeX::Fiscal::Fiscal5253->new(
+     end_month => 12,
+     end_dow => 6,
+     end_type => 'last',
+     leap_period => 'last',
+ );
 
 The constructor accepts the following parameters:
 
@@ -621,12 +738,12 @@ fiscal calendar always ends on the same weekday. Default: 6 (Saturday)
 
 determines how to calculate the last day of the fiscal year
 based on the C<end_month> and C<end_dow>. There are two legal vaules:
-"Last" and "Closest". Default: "Last"
+"last" and "closest". Default: "last"
 
-"Last" says to use the last weekday of the type specified in C<end_dow> as
-the end of the fiscal year.
+"last" says to use the last weekday in the month of the type specified
+in C<end_dow> as the end of the fiscal year.
 
-"Closest" says to use the weekday of the type specified that is closest
+"closest" says to use the weekday of the type specified that is closest
 to the end of the calendar month as the last day, B<even if it is in the
 following month>.
 
@@ -634,17 +751,17 @@ following month>.
 
 determines what period the 53rd week (if needed) is placed in.
 This could be of importance when creating year-over-year reports.
-There are two legal values: "First" and "Last". Default: "Last"
+There are two legal values: "first" and "last". Default: "last"
 
-"First" says to place the extra week in period 1.
+"first" says to place the extra week in period 1.
 
-"Last" says to place the extra week in period 12.
+"last" says to place the extra week in period 12.
 
 =back
 
 The last two parameters control what year the calendar is generated for.
-B<Note:> These parameters are mutually exclusive and will throw an error
-if both are present.
+B<Note:> These parameters are optional but mutually exclusive and will
+throw an error if both are present.
 
 =over 4
 
@@ -676,7 +793,7 @@ of a given fiscal year might have different values for the calendar year
 vs the fiscal year.
 
 If the value for C<date> is a string, it must be specified as either
-"YYYY-MM-DD" or "MM/DD/YYYY" or some reason able variant of those such as
+"YYYY-MM-DD" or "MM/DD/YYYY" or some reasonable variant of those such as
 single digit days and months. Time components, if present, are discarded.
 Any other format will generate a fatal error. A L<DateTime> object will be
 cloned before being used to prevent unwanted changes to the original object.
@@ -685,135 +802,183 @@ cloned before being used to prevent unwanted changes to the original object.
 
 =head1 ACCESSORS
 
-All accessors are B<read-only> methods that return meta-information about
-parameters that were used to construct the object or the base values
-represented by the object as a result of those parameters.
+The accessors allow you to examine the parameters used to create the calendar
+and the resulting base values. All accessors are read-only and will throw
+an exception if an attempt is made to change the value.
 
 If you want to change any of the underlying properties that define an
 object, B<create a new object!>
 
-=head2 meta
-
- my $meta = $fc->meta();
- my %meta = $fc->meta();
-
-This method will return either a hash or a reference to a hash (denpending
-upon context) containing all of the available meta-information in one
-structure.
-
- my $fc = DateTimeX::Fiscal::Fiscal5253->new( year => 2012 );
- my $fc_info = $fc->meta();
-  
- print Dumper($fc_info);
- $VAR1 = {
-          'end_dow' => 6,
-          'leap_period' => 'last',
-          'end_type' => 'last',
-          'end' => '2012-12-29',
-          'end_month' => 12,
-          'year' => 2012,
-          'start' => '2012-01-01',
-          'weeks' => 52
-        };
-
-The value contained in C<$fc_info-E<gt>{year}> is the name of the fiscal year as
-commonly used by accountants (as in "fye2012") and is usually the same as
-the calendar year the fiscal year B<ends> in. However, it is possible for
-the actual ending date to be in the B<following> calendar year when the C<end_month> is '12' (the default) and an C<end_type> of "closest" specified, Fiscal
-year 2014 built as shown below demonstrates this:
-
- my $fc = DateTimeX::Fiscal::Fiscal5253->new(
-              year => 2014,
-              end_type => 'closest'
-          );
- 
- print Dumper($fc->meta());
- $VAR1 = {
-          'end_dow' => 6,
-          'leap_period' => 'last',
-          'end_type' => 'closest',
-          'end' => '2015-01-03',
-          'end_month' => 12,
-          'year' => 2014,
-          'start' => '2013-12-29',
-          'weeks' => 53
-        };
-
-=head2 Individual Attributes
-
-The following are provided as a means to access the invidual items in the
-above structure for those who prefer individual accessors. Remember, these
-are all B<read-only>.
-
-=over 4
-
-=item year
-
- my $year = $fc->year();
-
-=item end_month
+=head2 end_month
 
  my $end_month = $fc->end_month();
 
-=item end_dow
+=head2 end_dow
 
  my $end_dow = $fc->end_dow();
 
-=item end_type
+=head2 end_type
 
  my $end_type = $fc->end_type();
 
-=item start
-
- my $start = $fc->start();
-
-=item end
-
- my $end = $fc->end();
-
-=item weeks
-
- my $weeks = $fc->weeks();
-
-=item leap_period
+=head2 leap_period
 
  my $leap_period = $fc->leap_period();
 
-=back
+=head2 year
 
-=head1 METHODS
+ my $year = $fc->year();
+
+Returns the either the value that was supplied for the C<year> parameter to
+the constuctor or the year that resulted from the value supplied in the
+C<date> parameter. This is what would be used as the name of the fiscal year.
+
+=head2 start
+
+ my $start = $fc->start();
+
+Returns the first date in the fiscal year as contructed from the parameters
+given to the constructor.
+
+=head2 end
+
+ my $end = $fc->end();
+
+Returns the last date in the fiscal year as contructed from the parameters
+given to the constructor.
+
+=head2 weeks
+
+ my $weeks = $fc->weeks();
+
+Returns the number of weeks in the fiscal year as constructed by the
+parameters given to the construtor. The value will be either "52" or "53"
+depending on whether a leap week was added. This value does B<not> look
+at the calendar style but rather is based on only the fiscal year itself.
 
 =head2 has_leap_week
 
  my $fc = DateTimeX::Fiscal::Fiscal5253->new( year => 2006 );
  print "This is a Fiscal Leap Year" if $fc->has_leap_week;
 
-Returns a Boolean value indicating whether or not the Fiscal Year for the
+This method is basically syntactic sugar for the C<weeks> accessor and
+returns a Boolean value indicating whether or not the fiscal Year for the
 object has 53 weeks instead of the standard 52 weeks.
+
+=head1 METHODS
+
+=head2 style
+
+ my $fc = DateTimeX::Fiscal::Fiscal5253->new( year => 2006 );
+ my $cal_style = $fc->style; # returns the current style
+ $fc->style( 'restated );    # set the style to 'restated'
+
+This method reads and sets the calendar style to be used by all of the
+following methods. It can be overridden on a case by case basis as needed
+by those methods.
+
+The legal values are "fiscal", "restated", and "truncated" when the style
+is being set. A new object has the style set to 'fiscal' by default.
+
+The value 'fiscal' will use a calendar with the full number of weeks
+without regard to whether there are 52 or 53 weeks in the year.
+
+The value 'restated' says to ignore the first week in a 53 week year and
+create a calendar with only 52 weeks. This allows for more accurate
+year-over-year comparisons involving a year that would otherwise have
+53 weeks.
+
+The value 'truncated' says to ignore the last week in a 53 week year and
+create a calendar with only 52 weeks. This may allow for more accurate
+year-over-year comparisons involving a year that would otherwise have
+53 weeks.
+
+"restated" and "truncated" have no effect in normal 52 week years.
+
+=head2 summary
+
+ my %summary = $fc->summary();
+ my $summary = $fc->summary();
+ 
+ my %summary = $fc->summary( style => 'restated');
+ my $summary = $fc->summary( 'restated' );
+
+This method will return either a hash or a reference to a hash (denpending
+upon context) containing a summary of the current calendar style or the one
+specified by the style parameter.
+
+ my $fc = DateTimeX::Fiscal::Fiscal5253->new( year => 2012 );
+ my $fc_info = $fc->summary();
+  
+ print Dumper($fc_info);
+ $VAR1 = {
+          'style => 'fiscal',
+          'year' => 2012,
+          'start' => '2012-01-01',
+          'end' => '2012-12-29',
+          'weeks' => 52
+        };
+
+The value contained in C<$fc_info-E<gt>{year}> is the name of the fiscal
+year as commonly used by accountants (as in "fye2012") and is usually the
+same as the calendar year the fiscal year B<ends> in. However, it is
+possible for the actual ending date to be in the B<following> calendar
+year when the C<end_month> is '12' (the default) and an C<end_type> of
+"closest" specified, fiscal year 2014 built as shown below demonstrates this:
+
+ my $fc = DateTimeX::Fiscal::Fiscal5253->new(
+              year => 2014,
+              end_type => 'closest'
+          );
+ 
+ print Dumper($fc->summary());
+ $VAR1 = {
+          'style => 'fiscal',
+          'year' => 2014,
+          'start' => '2013-12-29',
+          'end' => '2015-01-03',
+          'weeks' => 53
+        };
 
 =head2 contains
 
+ my $fc = DateTimeX::Fiscal::Fiscal5253->new( year => 2012 );
+  
  if ( my $pnum = $fc->contains() ) {
      print "The current date is in period $pnum\n";
  }
   
- if ( $fc->contains( date => 'today', calendar => 'Restated' ) ) {
-     print 'The current day is in the Fiscal calendar';
+ if ( $fc->contains( date => 'today', style => 'restated' ) ) {
+     print 'The current day is in the fiscal calendar';
  }
   
- if ( $fc->contains( date => '2012-01-01', calendar => 'Fiscal' ) ) {
-     print '2012-01-01 is in the Fiscal calendar';
+ if ( $fc->contains( date => '2012-01-01', style => 'fiscal' ) ) {
+     print '2012-01-01 is in the fiscal calendar';
  }
   
  my $dt = DateTime->today( time_zone => 'floating' );
  if ( my $pnum = $fc->contains( date => $dt ) ) {
      print "$dt is in period $pnum\n";
  }
+  
+ my %containers = $fc->contains( '2012-06-04' );
+ print Dumper(\%containers);
+ $VAR1 = {
+          'period' => 6,
+          'week' => 23
+        };
 
-This method takes two named parameters, 'date' and 'calendar', and returns
-the period number containing 'date' if the given date is valid for the
-specified calendar. Bear in mind that some dates that are in the
-Fiscal calendar might not be in a Restated or Truncated calendar.
+Returns the period in the designated style that contains the given date or
+'0' if not. The method will C<croak> if an error occurs such as an invalid date
+format or unknown style type.
+
+This method takes two named parameters, 'date' and 'style'. Bear in mind
+that some dates that are in the fiscal calendar might not be in a restated
+or truncated calendar. A single un-named parameter can be used as a shorthand
+for supplying only the date.
+
+A hash containing both the period and week numbers is returned if the
+method is called in list context.
 
 =over 4
 
@@ -822,103 +987,36 @@ Fiscal calendar might not be in a Restated or Truncated calendar.
 Accepts the same formats as the contructor as well as the special
 keyword 'today'. Defaults to the current date if not supplied.
 
-=item C<calendar>
+=item C<style>
 
 Specifies which calendar style to check against and accepts
-the same values as the 'calendar' method does. The default is 'Fiscal'.
+the same values as the 'style' method does. The default is the current value
+returned as set by the C<style> method.
 
 =back
 
-=head2 calendar
-
- my $cal = $fc->calendar();
- my $cal = $fc->calendar( style => 'Normal' );
- my $rcal = $fc->calendar( style = 'Restated' );
- 
- my @cal = $fc->calendar()
- ...
-
-Returns either an array or a reference to an array (depending upon
-context) that contains an entry with meta data in the first element
-($cal->[0]) and period (month) data in the folling twelve entries. This
-allows for a natural access cycle using C<for ( 1 .. 12 )> in many cases.
-
-It accepts a single parameter, C<style>, which must be 'Fiscal',
-'Restated' or 'Truncated' (defaults to 'Fiscal'.)
-
-The value 'Fiscal' will build a calendar with the full number of weeks
-without regard to whether there are 52 or 53 weeks in the year.
-
-The value 'Restated' says to ignore the first week in a 53 week year and
-create a calendar with only 52 weeks. This allows for more accurate
-year-over-year comparisons involving a year that would otherwise have
-53 weeks.
-
-The value 'Truncated' says to ignore the last week in a 53 week year and
-create a calendar with only 52 weeks. This may allow for more accurate
-year-over-year comparisons involving a year that would otherwise have
-53 weeks.
-
-B<Note!> The method will return a 'Fiscal' calendar if either 'Restated'
-or 'Truncated' is requested for a normal 52 week year since there is
-no difference in those cases.
-
-The meta information in the first element ($cal[0]) contains the following
-information about how the calendar (B<not the object!>) is configured:
-
- print Dumper($rcal->[0]);
- $VAR1 = {
-          'end_dow' => 6,
-          'leap_period' => 'last',
-          'style' => 'restated',
-          'end_type' => 'closest',
-          'end' => '2013-02-02',
-          'end_month' => 1,
-          'year' => 2013,
-          'start' => '2012-02-05',
-          'weeks' => 52
-        };
-
-B<Note!> The meta data in the calendar structure B<will> be different from that
-returned by the 'meta' method if either 'Restated' or 'Truncated' is
-requested for a 53 week year! Always use the data from the 'meta' method to
-see how the object itself was created.
-
-Each period element will have information about the period's start and end
-dates, number of weeks, and the nominal name of the month as well as the
-period number.
-
- print Dumper($cal=>[1]);
- $VAR1 = {
-          'period' => 1,
-          'month' => 'February',
-          'end' => '2012-03-03',
-          'weeks' => 4,
-          'start' => '2012-02-05'
-        };
-
 =head2 period
 
- my %pdata = $fc->period( period => 5, calendar => 'Restated' );
- my $pdata = $fc->period( period => 1, calendar => 'Fiscal' );
+ my %pdata = $fc->period( period => 5, style => 'restated' );
+ my $pdata = $fc->period( period => 1, style => 'fiscal' );
 
 Read-only method that returns a hash or a reference to a hash depending
 upon context that contains all of the data for the requested period in
-the specified calendar type.
+the specified style type.
 
 =over 4
 
 =item C<period>
 
 Must be a number in the range 1 - 12. If not given, the current date will
-used if it exists in the requested calendar and return the period data
-containing it.
+used if it exists in the requested style and period data
+containing it will be returned.
 
-=item C<calendar>
+=item C<style>
 
 Specifies what calendar style to retrieve the period information from. Legal
-values are the same as the C<style> parameter for the 'calendar' method.
-Default is 'Fiscal'.
+values are the same as those for the C<style> method. The current value of
+the C<style> method will be used by default.
 
 =back
 
@@ -933,8 +1031,9 @@ The returned data is as follows:
           'end' => '2012-03-02'
         };
 
-B<Note!> It is an error condition to supply a value of C<undef> for 'period'.
-Consider what can happen if one is tempted to write code such as this:
+B<Note!> It is an error condition to supply a value of C<undef> or '0' for
+'period'.  Consider what can happen if one is tempted to write code such
+as this:
 
  my $pinfo = $fc->period( period => $fc->contains( date => $somedate ) );
 
@@ -943,16 +1042,15 @@ calendar. Without this restriction, the 'period' method would attempt
 to use the current date, which may or may not exist in the object, and would
 almost certainly be different than what was desired.
 
-The following methods are provided for those who want to access the individual
-components of the period structure without dealing with a hash. They return
-a scalar value and accept the same parameters as C<period> does. C<undef>
-will be returned if an error occurs.
+The following methods are syntactic sugar for those who want to access the
+individual components of the period structure without dealing with a hash.
+They return a scalar value and accept the same parameters as C<period> does.
 
 =over 4
 
 =item period_month
 
- my $pmonth = $fc->period_month( period => 3, calendar => 'Fiscal' );
+ my $pmonth = $fc->period_month( period => 3, style => 'fiscal' );
 
 =item period_start
 
@@ -960,24 +1058,92 @@ will be returned if an error occurs.
 
 =item period_end
 
- my $pend = $fc->period_end( calendar => 'Fiscal' );
+ my $pend = $fc->period_end( style => 'fiscal' );
 
 =item period_weeks
 
- my $pweeks = $fc->period_weeks( period => 2, calendar => 'Restated' );
+ my $pweeks = $fc->period_weeks( period => 2, style => 'restated' );
 
 =back
 
 There is no method to return the period number component because presumably
-you already know that. Use the "contains" method to get the period number
-for the current date if applicable. (Besides, C<$fc-E<gt>period_period> is just
+you already know that. Use C<contains> to get the period number for the
+current date if applicable. (Besides, C<$fc-E<gt>period_period> is just
 plain ugly!)
 
-=head1 Retail 4-5-4 calendars
+=head2 week
+
+ my %wdata = $fc->week( week => 5, style => 'restated' );
+ my $wdata = $fc->week( week => 5, style => 'restated' );
+
+Read-only method that returns a hash or a reference to a hash depending
+upon context that contains all of the data for the requested week in
+the specified style type.
+
+=over 4
+
+=item C<week>
+
+Must be a number in the range 1 - 52 (53 if a leap week is present in the
+requested style.) If not given, the current date will used if it exists in
+the requested style and the data for the week data containing it will be
+returned.
+
+=item C<style>
+
+Specifies what calendar style to retrieve the week information from. Legal
+values are the same as those for the C<style> method. The current value for
+the C<style> method will be used by default.
+
+=back
+
+The returned data is as follows:
+
+ print Dumper($wdata);
+ $VAR1 = { 
+          'week' => 5,
+          'period' => 2,
+          'period_week' => 1,
+          'start' => '2012-01-29'
+          'end' => '2012-02-04',
+        };
+
+B<Note!> It is an error condition to supply a value of C<undef> or '0' for
+'week' for the same reason as given for C<period> above.
+
+The following methods are syntactic sugar for those who want to access the
+individual components of the week structure without dealing with a hash.
+They return a scalar value and accept the same parameters as C<week> does.
+
+=over 4
+
+=item week_period
+
+ my $wperiod = $fc->week_period( week => 3, style => 'fiscal' );
+
+=item week_period_week
+
+ my $wperiod = $fc->week_period_week( week => 3, style => 'fiscal' );
+
+=item week_start
+
+ my $wstart = $fc->week_start( week => 5 );
+
+=item week_end
+
+ my $wend = $fc->week_end( style => 'fiscal' );
+
+=back
+
+There is no method to return the week number component because presumably
+you already know that. Use C<contains> to get the week number for the current
+date if applicable. (Besides, C<$fc-E<gt>week_week> is just plain ugly!)
+
+=head1 RETAIL 4-5-4 CALENDARS
 
 A Retail 4-5-4 calendar (as described by the National Retail Federation here:
 L<http://www.nrf.com/modules.php?name=Pages&sp_id=392>) is an example of a
-Fiscal 52/53 week year that starts on the Sunday closest to Jan 31 of
+fiscal 52/53 week year that starts on the Sunday closest to Jan 31 of
 the specified year.
 
 In other words, to create a Retail 4-5-4 calendar for 2012, you will create
@@ -994,6 +1160,33 @@ years are named for the year they B<begin> in!
      end_type => 'closest', # closest to the end of the month
      leap_period => 'last'  # and any leap week in the last period
  );
+ 
+ print Dumper(\%{$r2012->summary()});
+ $VAR1 = { 
+          'style' => 'fiscal',
+          'year' => '2013',
+          'weeks' => 53,
+          'start' => '2012-01-29'
+          'end' => '2013-02-02',
+         };
+ 
+ print Dumper(\%{$r2012->summary( style => 'restated' )});
+ $VAR1 = { 
+          'style' => 'restated',
+          'year' => '2013',
+          'weeks' => 52,
+          'start' => '2012-02-05'
+          'end' => '2013-02-02',
+        };
+ 
+ print Dumper(\%{$r2012->summary( style => 'truncated' )});
+ $VAR1 = { 
+          'style' => 'truncated',
+          'year' => '2013',
+          'weeks' => 52,
+          'start' => '2012-01-29'
+          'end' => '2013-01-26',
+        };
 
 You can verify that this is correct by viewing the calendars available at
 the NRF website: L<http://www.nrf.com/4-5-4Calendar>
@@ -1015,11 +1208,6 @@ L<DateTime>, L<Carp>
 
 =head1 TO DO
 
-Add better error reporting via a class variable/method instead of
-using L<Carp> messages.
-
-Add methods to work with fiscal week numbers.
-
 Allow the C<leap_period> parameter to 'new' to accept a number in the
 range 1 .. 12 besides 'first' and 'last' to specify explicitly which
 period to place any leap week in.
@@ -1031,7 +1219,7 @@ Anything else that users of this module deem desirable.
 L<DateTime> to get ideas about how to work with an object suppiled to
 the constructor as the C<date> parameter.
 
-Do a Google (or comparable) search to learn more about Fiscal Years and
+Do a Google (or comparable) search to learn more about fiscal Years and
 the 52/53 week. This is a fairly arcane subject that usually is of interest
 only to accountants and those of us who must provide reports to them.
 

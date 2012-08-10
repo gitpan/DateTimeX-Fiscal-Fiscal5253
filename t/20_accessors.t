@@ -61,22 +61,6 @@ my @accessors = (
     },
 );
 
-my $testplan = @accessors * 2;
-$testplan += 2;
-$testplan *= 2;
-
-plan( tests => $testplan );
-
-# First, test the "meta" method, not really an accessor as it will
-# return either a hash or a hash reference depending upon context
-# containing all of the information that can be returned by an accessor.
-my $yr_ref = $fc->meta();
-isa_ok($yr_ref,'HASH','get hash reference for meta data');
-
-# This assumes that if we can access a particular item we got a hash.
-my %yr_hash = $fc->meta();
-ok($yr_hash{year} == $params{year},'get hash for meta data');
-
 # Test fetching the values. This tests that the accessors retrieve
 # known values from the proper elements in the object.
 foreach ( @accessors ) {
@@ -99,12 +83,6 @@ foreach ( @accessors ) {
 
 $class = 'Empty::Fiscal5253';
 
-$yr_ref = $fc->meta();
-isa_ok($yr_ref,'HASH','get hash reference for meta data');
-
-%yr_hash = $fc->meta();
-ok($yr_hash{year} == $params{year},'get hash for meta data');
-
 foreach ( @accessors ) {
     my $accessor = $_->{accessor};
     ok($fc->$accessor() eq $_->{expect},"get $accessor");
@@ -117,6 +95,8 @@ foreach ( @accessors ) {
     };
     like($@,qr/read\-only param/,"blocked setting $accessor");
 }
+
+done_testing();
 
 exit;
 
