@@ -59,14 +59,14 @@ ok($cmeta53->{weeks} == 52, 'Truncated has 52 weeks');
 
 # Test that "contains" function accepts valid calendar values
 ok($fc53->contains(date => $fc53->start) == 1, 'default has start date');
-ok($fc53->contains(date => $fc53->end) == 12,  'default has end date');
+ok($fc53->contains(date => $fc53->end) == 53,  'default has end date');
 ok($fc53->contains(date => $fc53->start, style => 'Fiscal') == 1,
     'default has start date');
-ok($fc53->contains(date => $fc53->end, style => 'Fiscal') == 12,
+ok($fc53->contains(date => $fc53->end, style => 'Fiscal') == 53,
     'default has end date');
 ok($fc53->contains(date => $fc53->start, style => 'Truncated') == 1,
     'Truncated has start date');
-ok($fc53->contains(date => $fc53->end, style => 'Restated') == 12,
+ok($fc53->contains(date => $fc53->end, style => 'Restated') == 52,
     'Restated has end date');
 ok(!$fc53->contains(date => $fc53->end, style => 'Truncated'),
     'Truncated does not have default end date');
@@ -78,12 +78,12 @@ ok(!$fc53->contains(date => $fc53->start, style => 'Restated'),
 my $origstyle = $fc53->style;
 $fc53->style('Fiscal');
 ok($fc53->contains($fc53->start) == 1, 'default has start date');
-ok($fc53->contains($fc53->end) == 12,  'default has end date');
+ok($fc53->contains($fc53->end) == 53,  'default has end date');
 $fc53->style('Truncated');
 ok($fc53->contains($fc53->start) == 1, 'Truncated has start date');
 ok(!$fc53->contains($fc53->end), 'Truncated does not have default end date');
 $fc53->style('Restated');
-ok($fc53->contains($fc53->end) == 12, 'Restated has end date');
+ok($fc53->contains($fc53->end) == 52, 'Restated has end date');
 ok(!$fc53->contains($fc53->start),'Restated does not have default start date');
 $fc->style($origstyle);
 

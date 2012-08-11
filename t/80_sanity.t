@@ -52,7 +52,7 @@ sub test_oneyear
     ok($real_dow == $fc->end_dow,'correct end_dow');
     ok($fc->contains( date => $fc->{_start_ymd} ) == 1,
         'contains start date in period 1');
-    ok($fc->contains( date => $fc->{_end_ymd} ) == 12,
+    ok($fc->contains( date => $fc->{_end_ymd} ) == $fc->weeks,
         'contains end date in period 12');
     ok(!$fc->contains( date => $fc->{_start}->clone->subtract( days => 1 ) ),
         'does not contain day before start date');

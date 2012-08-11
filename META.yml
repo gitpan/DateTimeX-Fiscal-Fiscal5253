@@ -20,4 +20,4 @@ no_index:
 requires:
   Carp: 0
   DateTime: 0
-version: 1.01
+version: 1.02
