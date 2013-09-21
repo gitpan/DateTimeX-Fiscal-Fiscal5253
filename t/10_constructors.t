@@ -1,5 +1,3 @@
-# $Id$
-
 use strict;
 use warnings;
 
@@ -106,6 +104,12 @@ my @goodparams = (
         tname => 'good date parameter, format mm/dd/yyyy',
         params => {
             date => '01/01/2012',
+        },
+    },
+    {
+        tname => 'good date parameter, 12/31/2012',
+        params => {
+            date => '12/31/2012',
         },
     },
     {
