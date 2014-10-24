@@ -22,7 +22,8 @@
    "prereqs" : {
       "build" : {
          "requires" : {
-            "ExtUtils::MakeMaker" : "0"
+            "Test::Exception" : "0",
+            "Test::More" : "0"
          }
       },
       "configure" : {
@@ -34,10 +35,12 @@
          "requires" : {
             "Carp" : "0",
             "DateTime" : "0",
+            "Moo" : "0",
+            "MooX::StrictConstructor" : "0",
             "perl" : "5.008008"
          }
       }
    },
    "release_status" : "stable",
-   "version" : "1.06"
+   "version" : "2.01"
 }

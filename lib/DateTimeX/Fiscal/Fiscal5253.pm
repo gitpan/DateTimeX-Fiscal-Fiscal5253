@@ -1,31 +1,13 @@
 package DateTimeX::Fiscal::Fiscal5253;
 
-use strict;
-use warnings FATAL => 'all';
-
-our $VERSION = '1.06';
+our $VERSION = '2.01';
 
 use Carp;
 use DateTime;
 use POSIX qw( strftime );
 
-my @params = (
-    qw(
-      end_month
-      end_dow
-      end_type
-      leap_period
-      year
-      date
-      )
-);
-
-my $defaults = {
-    end_month   => 12,
-    end_dow     => 6,
-    end_type    => 'last',
-    leap_period => 'last',
-};
+use Moo;
+use MooX::StrictConstructor;
 
 my @periodmonths = (
     qw(
@@ -44,63 +26,6 @@ my @periodmonths = (
       )
 );
 
-# Automate creation of standard read-only accessors.
-my %attributes = map { $_ => 0 } @params;
-$attributes{start} = '_start_ymd';
-$attributes{end}   = '_end_ymd';
-$attributes{weeks} = '_weeks';
-
-# This one does not get an accessor.
-delete( $attributes{date} );
-
-# Define getters for each attribute.
-# This does NOT affect POD coverage testing.
-while ( my ( $attr, $fld ) = each(%attributes) ) {
-    my $key = $fld || $attr;
-    my $method = join( '::', __PACKAGE__, ${attr} );
-    {
-        no strict 'refs';
-        *$method = sub {
-            my $self = shift;
-            croak "Trying to set read-only accessor: $attr" if @_;
-
-            return $self->{$key};
-          }
-    }
-}
-
-# Utility function to validate values supplied as a calendar style.
-my $_valid_cal_style = sub {
-    my $style = shift || 'fiscal';
-
-    $style =~ tr/A-Z/a-z/;
-    croak "Invalid calendar style specified: $style"
-      unless $style =~ /^(fiscal|restated|truncated)$/;
-
-    return $style;
-};
-
-# Utility function to convert a date string to a DT object
-my $_str2dt = sub {
-    my $date = shift;
-
-    # convert date param to DT object
-    my ( $y, $m, $d );
-    if ( $date =~ m{^(\d{4})-(\d{1,2})-(\d{1,2})($|\D+)} ) {
-        $y = $1, $m = $2, $d = $3;
-    }
-    elsif ( $date =~ m{^(\d{1,2})/(\d{1,2})/(\d{4})($|\D+)} ) {
-        $y = $3, $m = $1, $d = $2;
-    }
-    else {
-        croak "Unable to parse date string: $date";
-    }
-    eval { $date = DateTime->new( year => $y, month => $m, day => $d ); }
-      or croak "Invalid date: $date";
-
-    return $date;
-};
-
 # Figure out if the epoch is a 32- or 64-bit value and use DT if needed
 my $_use_dt = sub {
     my $year = shift;
@@ -118,10 +43,187 @@ my $_use_dt = sub {
     return $is_32 && ( $year < 1903 || $year > 2037 );
 };
 
+# Utility function to convert a date string to a DT object
+my $_str2dt = sub {
+    my $date = shift;
+
+    return $date if ref($date);
+
+    # convert date param to DT object
+    my ( $y, $m, $d );
+    if ( $date =~ m{^(\d{4})-(\d{1,2})-(\d{1,2})(?:$|\D+)} ) {
+        $y = $1, $m = $2, $d = $3;
+    }
+    elsif ( $date =~ m{^(\d{1,2})/(\d{1,2})/(\d{4})(?:$|\D+)} ) {
+        $y = $3, $m = $1, $d = $2;
+    }
+    else {
+        croak "Unable to parse date string: $date";
+    }
+    eval { $date = DateTime->new( year => $y, month => $m, day => $d ); }
+      or croak "Invalid date: $date";
+
+    return $date;
+};
+
+# Utility function to validate values supplied as a calendar style.
+my $_valid_cal_style = sub {
+    my $style = shift || 'fiscal';
+
+    $style =~ tr/A-Z/a-z/;
+    croak "Invalid calendar style specified: $style"
+      unless $style =~ /^(fiscal|restated|truncated)$/;
+
+    return $style;
+};
+
+# Define attributes and psuedo-attributes
+has end_month => (
+    is  => 'ro',
+    isa => sub {
+        croak "Invalid value for param end_month: $_[0]"
+          unless $_[0] =~ /^(?:1[0-2]|[1-9])\z/;
+    },
+    default => 12,
+);
+
+has end_dow => (
+    is  => 'ro',
+    isa => sub {
+        croak "Invalid value for param end_dow: $_[0]"
+          unless $_[0] =~ /^[1-7]\z/;
+    },
+    default => 6,
+);
+
+has end_type => (
+    is     => 'ro',
+    coerce => sub { my $tmp = $_[0]; $tmp =~ tr[A-Z][a-z]; return $tmp; },
+    isa    => sub {
+        croak "Invalid value for param end_type: $_[0]"
+          unless $_[0] =~ /^(?:last|closest)$/;
+    },
+    default => 'last',
+);
+
+has leap_period => (
+    is     => 'ro',
+    coerce => sub { my $tmp = $_[0]; $tmp =~ tr[A-Z][a-z]; return $tmp; },
+    isa    => sub {
+        croak "Invalid value for param leap_period: $_[0]"
+          unless $_[0] =~ /^(?:first|last)$/;
+    },
+    default => 'last',
+);
+
+has year => (
+    is      => 'rwp',
+    builder => 1,
+    lazy    => 1,
+);
+
+has _date => (
+    is       => 'rw',
+    init_arg => 'date',
+    coerce   => $_str2dt,
+    isa      => sub {
+        croak 'Object in "date" parameter is not a member of DateTime'
+          unless $_[0]->isa('DateTime');
+    },
+);
+
+has _start_ymd => (
+    is       => 'rw',
+    init_arg => undef,
+    reader   => 'start',
+);
+
+has _end_ymd => (
+    is       => 'rw',
+    init_arg => undef,
+    reader   => 'end',
+);
+
+has _weeks => (
+    is       => 'rw',
+    init_arg => undef,
+    reader   => 'weeks',
+);
+
+has style => (
+    is       => 'rw',
+    init_arg => undef,
+    coerce   => sub { my $tmp = $_[0]; $tmp =~ tr[A-Z][a-z]; return $tmp; },
+    isa      => $_valid_cal_style,
+    default  => 'fiscal',
+);
+
+around BUILDARGS => sub {
+    my $orig  = shift;
+    my $class = shift;
+    my %args  = @_;
+
+    # which one would be correct?
+    croak 'Mutually exclusive parameters "year" and "date" are present'
+      if $args{year} && $args{date};
+
+    # clone the DT object if present
+    $args{date} = $args{date}->clone
+      if ref( $args{date} ) && $args{date}->isa('DateTime');
+
+    # supply a default date if needed
+    $args{date} = DateTime->today() unless $args{date} || $args{year};
+
+    return $class->$orig(%args);
+};
+
+# One of the few cases where modifying "new" is the right thing to do.
+# NOTE! testing reveals that this B<must not> come before "BUILDARGS".
+before new => sub {
+    croak 'Must be called as a class method only' if ref( $_[0] );
+};
+
+# Initialize the internal structures now that we know our params are good.
+sub BUILD {
+    my $self = shift;
+
+    $self->{_fiscal}    = undef;
+    $self->{_restated}  = undef;
+    $self->{_truncated} = undef;
+
+    $self->{_start}     = $self->_start5253;
+    $self->{_start_ymd} = $self->{_start}->ymd;
+    $self->{_end}       = $self->_end5253;
+    $self->{_end_ymd}   = $self->{_end}->ymd;
+
+    $self->{_weeks} =
+      $self->{_start}->clone->add( days => 367 ) > $self->{_end} ? 52 : 53;
+
+    $self->_build_weeks;
+    $self->_build_periods('fiscal');
+
+    if ( $self->{_weeks} == 53 ) {
+        $self->_build_periods('restated');
+        $self->_build_periods('truncated');
+    }
+
+    return;
+}
+
+sub _build_year {
+    my $self = shift;
+
+    # we *should be* guaranteed that _date contains a DateTime object
+    # if this is reached because no value was supplied for 'year'.
+    $self->{_date}->truncate( to => 'day' )->set_time_zone('floating');
+
+    return $self->_find5253;
+}
+
 # Build the week array once, then manipulate as needed.
 # Using epoch math is more than an order of magnitude faster
 # than DT, but the size of the epoch value must be tested.
-my $_build_weeks = sub {
+sub _build_weeks {
     my $self = shift;
 
     my $weeks = {};
@@ -168,12 +270,12 @@ my $_build_weeks = sub {
     $self->{_weeks_raw} = $weeks;
 
     return;
-};
+}
 
-# This code ref builds the basic calendar structures as needed.
-my $_build_periods = sub {
+# Build the basic calendar structures as needed.
+sub _build_periods {
     my $self = shift;
-    my $style = shift || $self->{_style};
+    my $style = shift || $self->{style};
 
     # not strictly needed, but makes for easier to read code
     my $restate  = $style eq 'restated'  ? 1 : 0;
@@ -272,7 +374,7 @@ my $_build_periods = sub {
     }
 
     return;
-};
+}
 
 # The end day for a specified year is trivial to determine. In normal
 # accounting use, a fiscal year is named for the calendar year it ends in,
@@ -309,7 +411,7 @@ sub _start5253 {
     my $self = shift;
 
     # do not assume it is safe to change the year attribute
-    local $self->{year} = $self->{year} - 1;
+    local $self->{year} = $self->year - 1;
     my $dt = $self->_end5253->add( days => 1 );
 
     return $dt;
@@ -319,105 +421,18 @@ sub _start5253 {
 sub _find5253 {
     my $self = shift;
 
-    my $y1 = $self->{date}->year;
+    my $y1 = $self->{_date}->year;
 
     # do not assume it is safe to change the year attribute
     local $self->{year} = $y1;
 
     my $e1 = $self->_end5253;
-    return $y1 + 1 if $e1 < $self->{date};
+    return $y1 + 1 if $e1 < $self->{_date};
 
     my $s1 = $self->_start5253;
-    return $y1 - 1 if $s1 > $self->{date};
+    return $y1 - 1 if $s1 > $self->{_date};
 
     return $y1;
-}
-
-# Duh
-sub new {
-    my $proto = shift;
-    my %args  = @_;
-
-    # normalize end_type arg
-    $args{end_type} =~ tr/A-Z/a-z/ if $args{end_type};
-
-    # normalize leap_period arg
-    $args{leap_period} =~ tr/A-Z/a-z/ if $args{leap_period};
-
-    # do basic validation and set controlling params as needed
-    # the default is to end on the last Saturday of December
-    foreach ( keys( %{$defaults} ) ) {
-        $args{$_} = $defaults->{$_} if !defined( $args{$_} );
-    }
-
-    croak "Invalid value for param end_type: $args{end_type}"
-      unless $args{end_type} =~ /^(?:last|closest)$/;
-    croak "Invalid value for param end_month: $args{end_month}"
-      unless $args{end_month} =~ /^(?:1[0-2]|[1-9])\z/;
-    croak "Invalid value for param end_dow: $args{end_dow}"
-      unless $args{end_dow} =~ /^[1-7]\z/;
-    croak "Invalid value for param leap_period: $args{leap_period}"
-      unless $args{leap_period} =~ /^(?:first|last)$/;
-
-    # which one would be correct?
-    croak 'Mutually exclusive parameters "year" and "date" present'
-      if $args{year} && $args{date};
-
-    croak 'Object in "date" parameter is not a member of DateTime'
-      if ref( $args{date} ) && !$args{date}->isa('DateTime');
-
-    if ( ref( $args{date} ) ) {
-        $args{date} = $args{date}->clone;
-    }
-    elsif ( $args{date} ) {
-
-        # _str2dt will croak on error
-        $args{date} = &{$_str2dt}( $args{date} );
-    }
-    elsif ( !$args{year} ) {
-        $args{date} = DateTime->today();
-    }
-
-    # All parameters have been validated, make the object.
-    my $class = ref($proto) || $proto;
-    my $self = bless {
-        _style     => 'fiscal',
-        _fiscal    => undef,
-        _restated  => undef,
-        _truncated => undef,
-    }, $class;
-    foreach (@params) {
-        $self->{$_} = delete( $args{$_} );
-    }
-
-    # Be sure there are none left over.
-    if ( scalar( keys(%args) ) ) {
-        croak 'Unknown parameter(s): ' . join( ',', keys(%args) );
-    }
-
-    # Set the year from the data attribute if that was given.
-    if ( $self->{date} ) {
-        $self->{date}->truncate( to => 'day' )->set_time_zone('floating');
-        $self->{year} = _find5253($self);
-    }
-
-    $self->{_start}     = $self->_start5253;
-    $self->{_start_ymd} = $self->{_start}->ymd;
-    $self->{_end}       = $self->_end5253;
-    $self->{_end_ymd}   = $self->{_end}->ymd;
-
-    $self->{_weeks} =
-      $self->{_start}->clone->add( days => 367 ) > $self->{_end} ? 52 : 53;
-
-    $self->$_build_weeks;
-    $self->$_build_periods('fiscal');
-
-    if ( $self->{_weeks} == 53 ) {
-        $self->$_build_periods('restated');
-        $self->$_build_periods('truncated');
-    }
-
-    return $self;
 }
 
 sub has_leap_week {
@@ -426,23 +441,12 @@ sub has_leap_week {
     return ( $self->{_weeks} == 53 ? 1 : 0 );
 }
 
-sub style {
-    my $self = shift;
-
-    if (@_) {
-        croak 'Too many arguments' if @_ > 1;
-        $self->{_style} = &{$_valid_cal_style}(shift);
-    }
-
-    return $self->{_style};
-}
-
 # return summary data about a calendar.
 sub summary {
     my $self = shift;
     my %args = @_ == 1 ? ( style => shift ) : @_;
 
-    $args{style} ||= $self->{_style};
+    $args{style} ||= $self->{style};
     croak 'Unknown parameter present' if scalar( keys(%args) ) > 1;
 
     my $cal = &{$_valid_cal_style}( $args{style} );
@@ -460,7 +464,7 @@ sub contains {
     my %args = @_ == 1 ? ( date => shift ) : @_;
 
     $args{date}  ||= 'today';
-    $args{style} ||= $self->{_style};
+    $args{style} ||= $self->{style};
 
     croak 'Unknown parameter present' if scalar( keys(%args) ) > 2;
 
@@ -503,7 +507,7 @@ my $_period_attr = sub {
     my %args = @_ == 1 ? ( period => shift ) : @_;
 
     $args{period} ||= 0;
-    $args{style}  ||= $self->{_style};
+    $args{style}  ||= $self->{style};
 
     croak 'Unknown parameter present' if scalar( keys(%args) ) > 2;
 
@@ -549,7 +553,7 @@ my $_week_attr = sub {
     my %args = @_ == 1 ? ( week => shift ) : @_;
 
     $args{week}  ||= 0;
-    $args{style} ||= $self->{_style};
+    $args{style} ||= $self->{style};
 
     croak 'Unknown parameter present' if scalar( keys(%args) ) > 2;
 
@@ -649,7 +653,8 @@ in any existing code.
      leap_period => 'last',
  );
 
-The constructor accepts the following parameters:
+The constructor B<must> be called as a class method and will throw an
+exception if not. It accepts the following parameters:
 
 =over 4
 
